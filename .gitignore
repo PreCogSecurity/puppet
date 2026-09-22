@@ -14,7 +14,7 @@ test.pp
 .bundle/
 ext/packaging/
 pkg/
-Gemfile.lock
+# Gemfile.lock is committed for reproducible installs (see CHANGELOG).
 Gemfile.local
 .bundle/
 puppet-acceptance/

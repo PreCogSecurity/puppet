@@ -12,7 +12,10 @@ end
 
 # C Ruby (MRI) or Rubinius, but NOT Windows
 platforms :ruby do
-  gem 'pry', :group => :development
+  # pry is pinned to the 0.10.4 release: newer releases pull in `reline`, which
+  # requires Ruby >= 2.6 and is therefore incompatible with the Ruby versions
+  # this project supports (>= 1.9.3).
+  gem 'pry', '~> 0.10.4', :group => :development
   gem 'yard', :group => :development
   gem 'redcarpet', '~> 2.0', :group => :development
   gem "racc", "1.4.9", :group => :development
@@ -52,6 +55,24 @@ group(:development, :test) do
 
   gem 'webmock', '~> 1.24'
   gem 'vcr', '~> 2.9'
+
+  # Code coverage measurement and enforcement. SimpleCov is only activated when
+  # the COVERAGE environment variable is set (see spec/spec_helper.rb), so it
+  # does not slow down ordinary test runs.
+  gem "simplecov", "~> 0.11.0", :require => false
+
+  # The following pins constrain transitive dependencies to versions that are
+  # compatible with the Ruby versions this project supports (>= 1.9.3). Newer
+  # releases of these gems require Ruby >= 2.4 and would break `bundle install`
+  # on the supported runtimes.
+  gem "crack", ">= 0.4.3", "< 0.4.5", :require => false  # webmock -> crack (0.4.5+ pulls rexml, needs Ruby >= 2.5)
+  gem "addressable", "~> 2.4.0", :require => false       # webmock -> addressable
+  gem "builder", "~> 3.2.0", :require => false           # yarjuf -> builder
+
+  # Dependency vulnerability audit (run in CI as `bundle exec bundle-audit
+  # check --update`). Placed in the test group so CI (which installs with
+  # `--without development extra`) can run the audit gate.
+  gem "bundler-audit", "~> 0.6.1", :require => false
 end
 
 group(:development) do
@@ -66,6 +87,11 @@ group(:extra) do
   gem "puppetlabs_spec_helper", :require => false
   gem "tzinfo", :require => false
   gem "msgpack", :require => false
+
+  # puppetlabs_spec_helper pulls these in unconstrained; pin to versions that
+  # support the Ruby versions this project targets (>= 1.9.3).
+  gem "rspec-puppet", "~> 2.4.0", :require => false
+  gem "puppet-lint", "~> 2.3.0", :require => false
 end
 
 require 'yaml'

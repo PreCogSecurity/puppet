@@ -1,39 +1,31 @@
 language: ruby
-sudo: false
+cache: bundler
 before_install:
-  - gem install bundler -v 1.10
-bundler_args: --without development
-script:
-  - "bundle exec rake $CHECK"
-notifications:
-  email: false
+  # Bundler 2.1.x is the last series that supports the Ruby versions this
+  # project targets (>= 1.9.3) and is compatible with the committed
+  # Gemfile.lock (BUNDLED WITH 2.1.4).
+  - gem install bundler -v 2.1.4
+bundler_args: --without development extra
 rvm:
   - 2.3.1
-  - 2.2.4
-  - 2.1.7
-  - 2.0.0
-  - 1.9.3
-
-env:
-  - "CHECK=parallel:spec\\[2\\]"
-  - "CHECK=rubocop"
-  - "CHECK=commits"
-
-matrix:
-  exclude:
-    - rvm: 2.3.1
-      env: "CHECK=rubocop"
-    - rvm: 2.2.4
-      env: "CHECK=rubocop"
-    - rvm: 2.0.0
-      env: "CHECK=rubocop"
-    - rvm: 1.9.3
-      env: "CHECK=rubocop"
-    - rvm: 2.3.1
-      env: "CHECK=commits"
-    - rvm: 2.2.4
-      env: "CHECK=commits"
-    - rvm: 2.0.0
-      env: "CHECK=commits"
-    - rvm: 1.9.3
-      env: "CHECK=commits"
+script:
+  - bundle exec rspec spec
+jobs:
+  include:
+    - name: "coverage (SimpleCov gate)"
+      rvm: 2.3.1
+      script: COVERAGE=yes MINIMUM_COVERAGE=40 bundle exec rspec spec
+    - name: "lint (RuboCop)"
+      rvm: 2.3.1
+      script: bundle exec rake rubocop
+    - name: "commit message check"
+      rvm: 2.3.1
+      script: bundle exec rake commits
+    - name: "dependency audit (bundler-audit)"
+      rvm: 2.3.1
+      script: bundle exec bundle-audit check --update
+    - name: "secret scan"
+      rvm: 2.3.1
+      script: bundle exec ruby util/ci/secret_scan.rb
+notifications:
+  email: false

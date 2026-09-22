@@ -653,9 +653,6 @@ Performance/RangeInclude:
 Style/TrailingUnderscoreVariable:
   Enabled: false
 
-Lint/LiteralInInterpolation:
-  Enabled: false
-
 Performance/DoubleStartEndWith:
   Enabled: false
 
