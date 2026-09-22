@@ -1,0 +1,25 @@
+# One-command startup for the Puppet master built from this source tree:
+#
+#   docker compose up --build
+#
+# The master is self-contained: it auto-generates its CA and server
+# certificates on first run and serves catalogs to agents on 8140/tcp.
+# Example manifests from ./examples are mounted read-only as the production
+# environment. PuppetDB (PostgreSQL-backed) can be added as an additional
+# service when report/fact storage is required.
+
+services:
+  puppet:
+    build: .
+    image: precog-puppet:4.5.0
+    ports:
+      - "8140:8140"
+    volumes:
+      - ./examples:/etc/puppetlabs/code/environments/production/manifests:ro
+    healthcheck:
+      test: ["CMD", "ruby", "-e", "begin; TCPSocket.new('127.0.0.1', 8140).close; rescue; exit 1; end"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped

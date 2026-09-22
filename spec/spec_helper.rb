@@ -8,6 +8,21 @@ $LOAD_PATH.unshift File.join(dir, 'lib')
 # Don't want puppet getting the command line arguments for rake or autotest
 ARGV.clear
 
+# Code coverage measurement and enforcement. Coverage is only activated when
+# the COVERAGE environment variable is set to "yes" (the CI coverage job does
+# this) so that ordinary test runs are not slowed down. The minimum coverage
+# gate is configurable via MINIMUM_COVERAGE and defaults to 40 percent; CI
+# fails the build when coverage drops below the threshold.
+if ENV['COVERAGE'] == 'yes'
+  require 'simplecov'
+  SimpleCov.start do
+    add_filter '/spec/'
+    add_filter '/lib/puppet/vendor/'
+    add_filter '/lib/puppet/external/'
+    minimum_coverage ENV.fetch('MINIMUM_COVERAGE', 40).to_i
+  end
+end
+
 begin
   require 'rubygems'
 rescue LoadError

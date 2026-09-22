@@ -43,6 +43,61 @@ in.
 For more complete docs on developing with puppet you can take a look at the
 rest of the [developer documents](docs/index.md).
 
+Running from source
+-------------------
+
+Prerequisites: Ruby >= 1.9.3 (Ruby 2.3.x recommended) and Bundler 2.1.x.
+
+    gem install bundler -v 2.1.4
+    bundle install --without development extra
+    bundle exec puppet --version
+
+The committed `Gemfile.lock` pins the exact dependency graph, so installs are
+reproducible across machines and CI.
+
+Running the test suite
+----------------------
+
+The full spec suite (unit and integration) is run with:
+
+    bundle exec rspec spec
+
+Static analysis and repository hygiene gates (also enforced in CI):
+
+    bundle exec rake rubocop            # lint
+    bundle exec rake commits            # commit message format
+    bundle exec bundle-audit check --update   # dependency vulnerability audit
+    bundle exec ruby util/ci/secret_scan.rb   # secret scanning
+
+Code coverage is measured with SimpleCov and gated by a minimum threshold.
+Enable it explicitly so ordinary test runs stay fast:
+
+    COVERAGE=yes MINIMUM_COVERAGE=40 bundle exec rspec spec
+
+Running with Docker
+-------------------
+
+A Dockerfile and docker-compose.yml are provided for one-command startup of
+the Puppet master built from this source tree:
+
+    docker compose up --build
+
+The master listens on 8140/tcp, auto-generates its CA and server certificates
+on first run, and serves the example manifests in `./examples` as the
+production environment. See `.env.example` for the environment variables
+Puppet and its build tooling honor.
+
+Security
+--------
+
+- Dependency vulnerabilities are audited in CI with `bundler-audit`; the gate
+  is intentionally strict and must be green before shipping.
+- `util/ci/secret_scan.rb` scans the tree for credentials (cloud keys, private
+  key material, API tokens) and fails CI on matches. Run it locally before
+  pushing: `bundle exec ruby util/ci/secret_scan.rb`.
+- Never commit secrets. Use a secret store (e.g. Hiera with eyaml, or a vault)
+  for credentials that Puppet must manage.
+
 License
 -------
 
