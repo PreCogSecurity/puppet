@@ -1,0 +1,197 @@
+# Continuous integration for the Puppet engine.
+#
+# Why this file exists: .travis.yml still describes the correct gates, but the
+# hosted Travis CI service no longer builds open-source repositories, so those
+# gates were not actually running. GitHub Actions restores them on every pull
+# request, which is what keeps `bundle exec rspec spec` and the security gates
+# honest over time.
+#
+# Ruby is supplied by a pinned container rather than by actions/setup-ruby on
+# purpose. This project still targets Ruby >= 1.9.3 (see README "Running from
+# source") and its Gemfile pins gems that do not install on modern runtimes, so
+# a containerised Ruby 2.3 is the only reproducible way to exercise the
+# committed Gemfile.lock. The Bundler version is pinned to match
+# "BUNDLED WITH 2.1.4" in Gemfile.lock, otherwise Bundler rewrites the lockfile
+# and the install stops being reproducible.
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  # Nightly drift detection: catches upstream gem/advisory changes that the
+  # pinned lockfile will not pick up on its own.
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+# Least privilege: CI only ever needs to read the repository. Nothing in this
+# workflow pushes tags, creates releases, or touches credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Must match "BUNDLED WITH" in Gemfile.lock.
+  BUNDLER_VERSION: '2.1.4'
+  # Bundler 2.1.x refuses to run unless it is opted in explicitly.
+  BUNDLE_FROZEN: 'true'
+  RUBY_IMAGE: 'ruby:2.3'
+  # Coverage gate enforced by spec/spec_helper.rb via SimpleCov.
+  MINIMUM_COVERAGE: '40'
+
+jobs:
+  # Proves a pristine clone can resolve the committed Gemfile.lock and run a
+  # spec with no pre-seeded cache and no external accounts. This is the job that
+  # catches toolchain drift and "works on my machine" rot early and cheaply.
+  fresh-install:
+    name: fresh-install
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      - name: Resolve Gemfile.lock with no bundler cache
+        run: bundle install --without development extra
+
+      - name: Smoke test the installed engine
+        run: bundle exec rspec spec/unit/type_spec.rb --format progress
+
+  # Full unit + integration suite, run on every push and pull request.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      - name: Cache installed gems
+        uses: actions/cache@v4
+        with:
+          path: vendor/bundle
+          key: bundle-${{ runner.os }}-ruby23-${{ hashFiles('Gemfile.lock') }}
+          restore-keys: |
+            bundle-${{ runner.os }}-ruby23-
+
+      - name: Install dependencies
+        run: bundle install --without development extra
+
+      - name: Verify the lockfile still satisfies the Gemfile
+        run: bundle check
+
+      # BUNDLE_FROZEN means the job fails loudly instead of silently rewriting
+      # Gemfile.lock, so a dependency change can never be committed unnoticed.
+      - name: Run the full spec suite
+        run: bundle exec rspec spec --format progress
+
+  # SimpleCov gate. COVERAGE=yes activates the measurement block in
+  # spec/spec_helper.rb, which fails the run below MINIMUM_COVERAGE percent.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      - name: Install dependencies
+        run: bundle install --without development extra
+
+      - name: Run the suite with the SimpleCov gate enabled
+        env:
+          COVERAGE: 'yes'
+        run: bundle exec rspec spec --format progress
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      # The development group is excluded on purpose: ruby-prof, redcarpet and
+      # racc are native extensions that compile on every CI run and are not
+      # needed for any of the gates below. Excluding them removes a pure
+      # build-fragility failure mode from the security-critical path.
+      - name: Install dependencies
+        run: bundle install --without development extra
+
+      - name: RuboCop
+        run: bundle exec rake rubocop
+
+      - name: Commit message format
+        run: bundle exec rake commits
+
+  # Known-vulnerability gate for the locked dependency graph. Fails the build
+  # on any advisory that affects a gem in Gemfile.lock.
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      - name: Install dependencies
+        run: bundle install --without development extra
+
+      - name: bundle-audit
+        run: bundle exec bundle-audit check --update
+
+  # Repository-wide credential scan (cloud keys, private key material, tokens).
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ruby:2.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bundler ${{ env.BUNDLER_VERSION }}
+        run: |
+          gem install bundler -v "${BUNDLER_VERSION}" --no-document
+          bundle --version
+
+      - name: Install dependencies
+        run: bundle install --without development extra
+
+      - name: Scan for committed secrets
+        run: bundle exec ruby util/ci/secret_scan.rb

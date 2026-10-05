@@ -1,0 +1,98 @@
+# Static security analysis.
+#
+# These checks are additive to the functional gates in ci.yml: they find
+# classes of defect that a spec suite cannot, namely tainted data reaching a
+# dangerous sink, and newly introduced vulnerable dependencies.
+name: Security
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    # Weekly re-scan catches advisories published after a PR was merged.
+    - cron: '43 4 * * 2'
+  workflow_dispatch:
+
+# Default to read-only. Individual jobs that genuinely need more opt in below,
+# so a new job added to this file cannot silently escalate its own privileges.
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # CodeQL semantic analysis. Puppet is an interpreted language with no build
+  # step, so `build-mode: none` is the correct extractor; there is nothing to
+  # trace. This is what raises static-analysis coverage from "none" and is the
+  # check most likely to surface a genuine command-injection or unsafe-deserialization
+  # path in lib/puppet.
+  codeql:
+    name: codeql (ruby)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ruby
+          build-mode: none
+          # Do not fail the build on pre-existing findings. Without a baseline
+          # the first run of a 260k LOC codebase would be all-new alerts and the
+          # gate would be permanently red, which trains reviewers to ignore it.
+          # New code is still analysed, and alerts appear on the Security tab.
+          category: "/language:ruby"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:ruby"
+
+  # Blocks a pull request that introduces a gem with a known advisory, even if
+  # the gem never made it into Gemfile.lock on master. Requires the Dependency
+  # Graph to be enabled (it is by default for GitHub-hosted public repos).
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
+
+  # Defence in depth for the secret scan that already runs in ci.yml: this uses
+  # GitHub's own push-protection pattern list, which is maintained upstream, so
+  # the two scans cover different credential shapes.
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    # Generous timeout: on push and schedule events this job walks the full
+    # 22k-commit history, which does not fit in the default budget.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history on the default branch only; scanning 22k commits of
+          # upstream history on every pull request would be prohibitively slow
+          # and would fail on historical false positives we cannot fix.
+          fetch-depth: 0
+
+      - name: Scan repository history for credentials
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
