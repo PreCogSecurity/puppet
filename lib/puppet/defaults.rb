@@ -99,6 +99,30 @@ module Puppet
       :hook => proc {|value| Puppet::Util::Log.level = value },
       :call_hook => :on_initialize_and_write,
     },
+    :log_format => {
+      :default => 'plain',
+      :type    => :enum,
+      :values  => ["plain", "json"],
+      :desc    => "The format Puppet uses when writing messages to the console
+        and to file log destinations.
+
+        * `plain` --- human readable, one line per message. This is the
+          default and is what operators and `puppet logs` expect.
+        * `json` --- newline delimited JSON: one self-describing object per
+          line, carrying the level, message, source, tags, timestamp and,
+          where known, the file/line/issue code that produced it. This is the
+          format log collectors and SIEM tooling can ingest without a grok
+          pattern, and unlike the historical JSON-array format it stays
+          parseable after an unclean shutdown.
+
+        The value is validated against the allowed set above, so a typo is
+        reported as a configuration error naming the offending value instead of
+        silently degrading to output that a downstream parser cannot read.
+
+        Note that a log file whose name ends in `.json` continues to select the
+        legacy JSON-array format regardless of this setting, so existing log
+        consumers are unaffected.",
+    },
     :disable_warnings => {
       :default => [],
       :type    => :array,

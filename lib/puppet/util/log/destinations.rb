@@ -45,6 +45,7 @@ end
 
 Puppet::Util::Log.newdesttype :file do
   require 'fileutils'
+  require 'json'
 
   def self.match?(obj)
     Puppet::Util.absolute_path?(obj)
@@ -65,13 +66,23 @@ Puppet::Util::Log.newdesttype :file do
 
   def initialize(path)
     @name = path
-    @json = path.end_with?('.json') ? 1 : 0
+
+    # An explicit `log_format = json` request wins over the filename heuristic
+    # and selects newline delimited JSON. Otherwise the legacy JSON-array format
+    # continues to be selected by a ".json" logfile name, so existing log
+    # consumers see no change until an operator opts in.
+    @ndjson = Puppet[:log_format] == "json"
+    @json = (!@ndjson && path.end_with?('.json')) ? 1 : 0
 
     # first make sure the directory exists
     # We can't just use 'Config.use' here, because they've
     # specified a "special" destination.
     unless Puppet::FileSystem.exist?(Puppet::FileSystem.dir(path))
-      FileUtils.mkdir_p(File.dirname(path), :mode => 0755)
+      # 0750 matches the documented mode of the :logdir setting. Puppet logs
+      # record node names, managed resource contents and, at debug level, the
+      # values of parameters being applied, so the log directory must not be
+      # traversable by unprivileged local users.
+      FileUtils.mkdir_p(File.dirname(path), :mode => 0750)
       Puppet.info "Creating log directory #{File.dirname(path)}"
     end
 
@@ -89,7 +100,11 @@ Puppet::Util::Log.newdesttype :file do
       end
     end
 
-    file = File.open(path,  File::WRONLY|File::CREAT|File::APPEND)
+    # Pass an explicit mode rather than inheriting the process umask, which on a
+    # stock configuration yields 0644 -- world readable. The mode only applies
+    # when the file is created here; an existing log file keeps whatever
+    # permissions the administrator gave it.
+    file = File.open(path,  File::WRONLY|File::CREAT|File::APPEND, 0640)
     file.puts('[') if need_array_start
 
     # Give ownership to the user and group puppet will run as
@@ -107,7 +122,11 @@ Puppet::Util::Log.newdesttype :file do
   end
 
   def handle(msg)
-    if @json > 0
+    if @ndjson
+      # One self-describing object per line: parseable line by line by log
+      # collectors, and still valid JSON if the process is killed mid-write.
+      @file.puts(JSON.dump(msg.to_structured_hash))
+    elsif @json > 0
       @json > 1 ? @file.puts(',') : @json = 2
       JSON.dump(msg.to_structured_hash, @file)
     else
@@ -141,6 +160,7 @@ Puppet::Util::Log.newdesttype :logstash_event do
 end
 
 Puppet::Util::Log.newdesttype :console do
+  require 'json'
   require 'puppet/util/colors'
   include Puppet::Util::Colors
 
@@ -163,10 +183,20 @@ Puppet::Util::Log.newdesttype :console do
       :debug   => { :name => 'Debug',     :color => :cyan,     :stream => $stdout },
     }
 
+    level = levels[msg.level]
+
+    # Structured console output for log shippers that read the agent's stdout.
+    # Colour codes are deliberately omitted: raw ANSI escapes inside a JSON
+    # string value break downstream parsers, and an operator asking for
+    # machine-readable output has already opted out of presentation.
+    if Puppet[:log_format] == "json"
+      level[:stream].puts(JSON.dump(msg.to_structured_hash))
+      return
+    end
+
     str = msg.respond_to?(:multiline) ? msg.multiline : msg.to_s
     str = msg.source == "Puppet" ? str : "#{msg.source}: #{str}"
 
-    level = levels[msg.level]
     level[:stream].puts colorize(level[:color], "#{level[:name]}: #{str}")
   end
 end

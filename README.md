@@ -1,7 +1,8 @@
 Puppet
 ======
 
-[![Build Status](https://travis-ci.org/puppetlabs/puppet.png?branch=master)](https://travis-ci.org/puppetlabs/puppet)
+[![CI](https://github.com/PreCogSecurity/puppet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/PreCogSecurity/puppet/actions/workflows/ci.yml)
+[![Security](https://github.com/PreCogSecurity/puppet/actions/workflows/security.yml/badge.svg?branch=master)](https://github.com/PreCogSecurity/puppet/actions/workflows/security.yml)
 [![Inline docs](https://inch-ci.org/github/puppetlabs/puppet.png)](https://inch-ci.org/github/puppetlabs/puppet)
 
 Puppet, an automated administrative engine for your Linux, Unix, and Windows systems, performs
@@ -74,6 +75,59 @@ Enable it explicitly so ordinary test runs stay fast:
 
     COVERAGE=yes MINIMUM_COVERAGE=40 bundle exec rspec spec
 
+Continuous integration
+----------------------
+
+CI runs on GitHub Actions (`.github/workflows/ci.yml`). Ruby is supplied by a
+pinned `ruby:2.3` container rather than by `actions/setup-ruby`, because this
+project still supports Ruby >= 1.9.3 and its `Gemfile.lock` will not resolve on
+a modern runtime. `BUNDLE_FROZEN` is set so a failing job reports a drifted
+lockfile instead of silently rewriting it.
+
+| Job | Purpose |
+| --- | --- |
+| `fresh-install` | Resolves the lockfile with no bundler cache and runs a smoke spec, proving a clean clone works |
+| `test` | Full `rspec spec` unit + integration suite |
+| `coverage` | Suite with the SimpleCov gate enabled (`COVERAGE=yes`) |
+| `lint` | RuboCop plus the commit-message format check |
+| `dependency-audit` | `bundle-audit check --update` |
+| `secret-scan` | `util/ci/secret_scan.rb` |
+
+`.github/workflows/security.yml` adds CodeQL Ruby analysis, pull-request
+dependency review, and a gitleaks history scan. All jobs run with
+`permissions: contents: read` unless a job genuinely needs more.
+
+Outdated gems and stale Actions pins are proposed by Dependabot
+(`.github/dependabot.yml`). Dependabot only ever opens pull requests; each one
+has to clear the gates above before it can land. The gems whose current pins are
+required for Ruby >= 1.9.3 support (`rubocop`, `mocha`, `pry`, `racc`,
+`redcarpet`, `rdoc`) are excluded from routine-bump groups on purpose.
+
+`.travis.yml` and `appveyor.yml` are retained for reference only. The hosted
+Travis CI service no longer builds open-source repositories, so the gates it
+described are enforced by the GitHub Actions workflows above.
+
+Structured logging
+------------------
+
+Log output is human readable by default. Set `log_format` to `json` to emit
+newline delimited JSON instead -- one self-describing object per line, which is
+what log collectors and SIEM tooling can ingest without a grok pattern, and what
+stays parseable if the process is killed mid-write:
+
+    Notice: Puppet log output
+
+becomes, with `log_format = json` in `puppet.conf`:
+
+    {"level":"notice","message":"Puppet log output","source":"Puppet","tags":["notice"],"time":"2016-05-12T09:15:00.123456789Z"}
+
+A message raised by a resource rather than by Puppet itself carries that
+resource as `source`, which is the field a collector filters on.
+
+Structured output is applied to the console and to file destinations, and never
+contains colour escapes. A log file whose name ends in `.json` keeps the
+historical JSON-array format, so existing log consumers are unaffected.
+
 Running with Docker
 -------------------
 
@@ -90,11 +144,17 @@ Puppet and its build tooling honor.
 Security
 --------
 
+See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy, the
+supported-version matrix, and deployment hardening guidance.
+
 - Dependency vulnerabilities are audited in CI with `bundler-audit`; the gate
   is intentionally strict and must be green before shipping.
 - `util/ci/secret_scan.rb` scans the tree for credentials (cloud keys, private
   key material, API tokens) and fails CI on matches. Run it locally before
   pushing: `bundle exec ruby util/ci/secret_scan.rb`.
+- Log files are created with mode `0640` inside a `0750` directory. Do not relax
+  this; Puppet logs can carry node names, resource contents and, at debug level,
+  parameter values.
 - Never commit secrets. Use a secret store (e.g. Hiera with eyaml, or a vault)
   for credentials that Puppet must manage.
 

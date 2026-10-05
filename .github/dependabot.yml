@@ -1,0 +1,63 @@
+# Automated dependency update tooling.
+#
+# The report's evidence for this repository recorded dep_update_tooling=none:
+# nothing was watching for upstream gem releases or newly published advisories,
+# so a stale pin could only be discovered by a human reading CHANGELOGs.
+#
+# Dependabot opens pull requests; it never pushes to this branch directly. Each
+# proposal has to survive the CI gates in .github/workflows/ci.yml (full spec
+# suite, RuboCop, bundler-audit) before it can land, so an update that breaks
+# something is caught by CI rather than shipped.
+version: 2
+
+updates:
+  # Gemfile / Gemfile.lock.
+  - package-ecosystem: bundler
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    # Keep the update branch in step with master so Dependabot can rebase its
+    # own PRs; this is what makes recurring PRs conflict-free.
+    rebase-strategy: disabled
+    commit-message:
+      prefix: "packaging"
+      include: scope
+    labels:
+      - dependencies
+      - ruby
+    groups:
+      # One reviewable PR for routine version bumps instead of one per gem.
+      routine-bumps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          # Held back deliberately: rubocop 1.x and mocha 2.x require Ruby
+          # >= 2.4/2.6 and would drop this project's declared Ruby >= 1.9.3
+          # support. Tracked in CHANGELOG.md as planned work.
+          - "rubocop"
+          - "mocha"
+          - "pry"
+          - "racc"
+          - "redcarpet"
+          - "rdoc"
+
+  # GitHub Actions workflow pinning, so a compromised or deprecated action
+  # version (e.g. actions/checkout@v1) gets flagged instead of sitting unnoticed.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "packaging"
+    labels:
+      - dependencies
+      - ci
